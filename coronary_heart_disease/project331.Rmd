@@ -1,0 +1,531 @@
+---
+title: "STAT 331 - Project"
+author: Weinan Cao(20734665) Jinlai Zhang(20601791)
+urlcolor: blue
+link-citations: yes
+citecolor: blue
+linkcolor: blue
+bibliography: references.bib
+biblio-style: apalike-url
+geometry: margin=2cm
+
+output:
+  pdf_document:
+    number_sections: true
+    citation_package: natbib
+---
+
+\newcommand{\var}{\mathrm{var}}
+
+```{r message=FALSE, echo=FALSE}
+library(statmod)
+library(knitr)
+library(jtools)
+library(broom)
+```
+
+# Summary {#sec:summary}
+
+In this report, we are going to test which elements are associated with the risk of having coronary heart disease and we are going to check how these elements influence the risk of having coronary heart disease. We first generated two models using automated model selection and manual model selection respectively. We compare and diagnose these two models and check if the model assumption are violated and if there are any outliers. Moreover, cross-validation is used to measure the power of predicting variables. And we finally arrives at the conclusion that the automated selected model is better than the manually constructed model. We find that people previously had myocardial infarction may lead to higher risk of coronary heart disease and higher body mass index may lower risk of CHD. Finally, we will make a recommendation to people to lower the risk of having CHD.
+
+# Descriptive Statistics {#sec:dsp}
+
+Before finding models to fit the data, it may be helpful to look at the basic information of the data to get a overall understanding. Hence, we use the R command to find the summary, draw pair plot and compute the variance inflation factors of the data. (R code in Appendix \ref{app:Summary})
+
+## Summary {#sec:dsp_s}
+
+```{r, label = "Summary", echo=FALSE, fig.width=15, fig.height=9,fig.align="center"}
+fhs <- read.csv("fhs.csv", header = T)
+summary(fhs)
+```
+
+## Pair Plots {#sec:dsp_pp}
+
+We can use pair plots to get a basic sense of the relationships between variables. In the pair plots, the categorical variables are removes as it may not be useful for determining the correlations of variables. We can plot it using R command: \ref{app:ppplot}
+
+
+```{r cachedChunk, fig.align="center", fig.cap="Pair plots for all continuous variables in the dataset", fig.height=9, fig.width=15, cache=TRUE,echo=FALSE,label="ppplot"}
+pairs(~chdrisk+totchol+age+sysbp+diabp+cigpday+bmi+heartrte+glucose+hdlc+ldlc, data=fhs)
+```
+
+The plots showed that:
+
+* There is no strong linear relationship between risk measure for coronary heart disease(`chdrisk`: response variable) and the x's.
+* Although cigpday is a continuous variable, it looks more like a categorical variable. When people are asked "how many cigarette do you smoke per day", they tend to have a answer being a multiple of 5. 
+* There is a strong linear relationship between serum total cholesterol(`totchol`) and low density lipoprotein cholesterol(`ldlc`) and between systolic blood pressure(`sysbp`) and diastolic blood pressure(`diabp`), suggesting that they might be colinear predictors and we may need to remove some variables.
+* From the plots, there is no obvious association between chdrisk and any of the continuous predictors.
+
+
+## Variance Inflation Factors {#sec:dsp_vif}
+
+Variance inflation factors is often used to determine the correlation between variables and find colinear predictors, we use $R^2$ to calculate the variance inflation factors and we have: (R code in Appendix \ref{app:VIF})
+
+```{r, label="vif",echo=FALSE, fig.width=15, fig.height=9,fig.align="center"}
+X<- model.matrix(lm(chdrisk ~ . - 1 - sex - cursmoke - diabetes - bpmeds 
+                    - prevmi - prevstrk - prevhyp, data = fhs))
+vif.R2 <- function(xname){
+  regform <- formula(paste0(xname, "~. -chdrisk"))
+  M <- lm(regform, data = fhs)
+  R2 <- summary(M)$r.square
+  1/(1-R2)
+}
+vif <- sapply(colnames(X), vif.R2)
+print(vif)
+```
+
+* The variance inflation factors for serum total cholesterol(`totchol`) and low density lipoprotein cholesterol(`ldlc`) are greater than 10, indicating that these two are highly correlated to other columns of explanatory variables. This confirms the finding we have above that there is strong linear relationship between serum total cholesterol(`totchol`) and low density lipoprotein cholesterol(`ldlc`). Hence, they are colinear predictors and may need to be removed from the data. 
+* All other continuous predictors have variance inflation factors less than 10, suggesting that there is no strong linear relationships between other explanatory variables.
+
+# Candidate Models {#sec:cm}
+
+For model construction, we modify the response variable to:
+$$logit(chdrisk) = log(chdrisk) - log(1-chdrisk)$$
+For this part, we will generate two candidate models. One is created using automated model selection and the other is constructed using manual model selection.
+
+```{r,echo=FALSE}
+fhs$chdrisk <- log(fhs$chdrisk) - log(1-fhs$chdrisk)
+```
+
+## Automated Model Selection {#sec:cm_am}
+
+* Forward selection is a greedy method, it commonly will create a model with least number of coefficients. It may miss some important predictors.
+* In order to not missing any important predictiors, we are going to use backward elimination.
+* We are going to create two models (`M0` and `Mmax`). `M0` is a model which only contains intercept. `Mmax` is a model which contains all the main effects and interactions.
+
+### Create new model
+```{r,echo=FALSE}
+M0 <- lm(chdrisk ~ 1, data =fhs)
+Mmax <- lm(chdrisk ~ (.)^2, data = fhs)
+print("The M0 model is :") 
+M0$call
+print("The Mmax model is :") 
+Mmax$call
+```
+
+* After setting up the models, we will check if there is any missing coefficient estimates.
+* Then we will check if there are any columes not available and we have
+
+```{r,echo=FALSE}
+beta.max<-coef(Mmax)
+names(beta.max)[is.na(beta.max)]
+```
+* We are going to remove those NAs from our Mmax model
+
+```{r,echo=FALSE,eval=FALSE}
+Mmax <- lm(chdrisk ~ (.)^2 - cursmoke:cigpday - bpmeds:prevhyp, data = fhs)
+anyNA(coef(Mmax))
+```
+
+
+### Backward Elimination
+
+Using R command, we can perform a barkward elimation model construction and we have: (R code in Appendix \ref{app:BWE})
+```{r cachedChunk2, echo=FALSE, fig.width=15, fig.height=9,fig.align="center",cache=TRUE,label = "bwe"}
+Mback <- step(object = Mmax,
+             scope = list(lower=M0, upper = Mmax),
+             direction = "backward",
+             trace = FALSE)
+Mback$call
+```
+
+```{r, echo=FALSE,eval=FALSE}
+back = length(coef(Mback))
+print(back)
+```
+There are 67 coefficients in `Mback`. Based on this model and previous analysis. We are going to make our manually selected model.
+
+## Manually Constructed Model {#sec:cm_mm}
+
+* We will start with a simple linear model to construct our model.
+* Based on the variance inflation factors(VIF)  \ref{sec:dsp_vif} we calculated, two variables' VIF are greater than 10, meaning that they are highly correlated with other explanatory variables. Those are considered to be colinear predictors and we may need to remove them from our model. So, we will do F-test on both variables.
+* After running F-test, we notice that p-value for serum total cholesterol(`totchol`) is greater than p-value for low density lipoprotein cholesterol(`ldlc`), so we decide to remove `ldlc` from our model. (Test code is in Appendix \ref{app:Colinear})
+
+```{r, echo= FALSE, eval = FALSE,label="colinear"}
+Morignal<- lm(fhs$chdrisk~. , data=fhs)
+Mred <- lm(fhs$chdrisk~. - ldlc, data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2]
+Morignal<- lm(fhs$chdrisk~. , data=fhs)
+Mred <- lm(fhs$chdrisk~. - totchol, data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2]
+```
+
+* Checking variance inflation factors again, we notice that no variables have a very lager variance inflation factor. Hence, we do not have any other colinear predictors.
+* There are another three variables' VIF greater than 2. After F-test, we notice that p-value for diastolic blodd pressure(`diabp`) is 0.3667. We remove `diabp` from our model.
+* Next we will test categorical variable, since they are not include in VIF. Based on test result, we notice that `cursmoke` and `prevstrk`'s p-value are greater than 0.05. We decide to remove them from our model. (Test code is in Appendix \ref{app:Catgo})
+
+```{r,echo=FALSE,eval=FALSE,label="catgo"}
+Morignal<- lm(fhs$chdrisk~. , data=fhs)
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk, data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2] 
+```
+
+* Finally, we will consider to add some important interactions to our model
+* We notice that there are three categories of problems related to the heart : blood sugar, blood pressure and lipids.
+* For lipids, we have totchol, `hdlc` and `ldlc`. We will test their interactions
+* For blood pressure, we have `sysbp`, `diabp` and `prehyp`. We will test their interactions
+* For blood sugar, we have `diabetes` and `glucose`. We will test their interactions as well.
+* After F-test, we add the interactions to our model.
+* Consider the fat may also influenced by lipids, We have to test the interaction between `totchol` and `bmi`. (Test code is in Appendix \ref{app:Dis})
+
+```{r,echo=FALSE,eval=FALSE,label="dis"}
+Morignal<- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk, data=fhs)
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose, data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2] 
+```
+
+* Now we have constructed a model as following.
+
+
+```{r,echo=FALSE}
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose, data=fhs)
+Mred$call
+```
+
+* Since we want our model to be more accurate, we are going to check our automated model's interactions
+* First, we find that `totchol`:`heartrte` and `sysbp`:`heartrte` may be very important, since abnormal heart behaviour may have influence on blood pressure and lipids. After F-test, we decide to add them to our model.
+* There are three different disease in our dataset: myocardial infarction, stroke and hypertension. We notice there are some interactions releated to them:  `prevmi`:`hdlc` , `prevmi`:`ldlc`, `prevstrk`:`ldlc`, `prevhyp`:`ldlc`. After F-test, we decide to add them to our model (Test code is in Appendix \ref{app:Auto})
+
+
+```{r,echo=FALSE,eval=FALSE,label="auto"}
+Morignal<- Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose, data=fhs)
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose
+           + totchol:heartrte + sysbp:heartrte
+           + prevmi:hdlc + prevmi:ldlc 
+           + prevstrk:ldlc + prevhyp:ldlc, #some interactions from automated model 
+           data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2] 
+```
+* Since hypertensive is not releated to stroke (Vascular blockage) and heart rate is not releated to blood sugar. We will use F-test to prove our assumption. After test, we can confirm that these two interactions are not important.(Test code is in Appendix \ref{app:Auto_2})
+
+```{r,echo=FALSE,eval=FALSE,label="auto_2"}
+Morignal<- Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose
+           + totchol:heartrte + sysbp:heartrte
+           + prevmi:hdlc + prevmi:ldlc 
+           + prevstrk:ldlc + prevhyp:ldlc, #some interactions from automated model 
+           data=fhs)
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose
+           + totchol:heartrte + sysbp:heartrte
+           + prevmi:hdlc + prevmi:ldlc 
+           + prevstrk:ldlc + prevhyp:ldlc + bpmeds:prevstrk + heartrte:glucose, #some interactions from automated model 
+           data=fhs)
+anova(Mred, Morignal)$"Pr(>F)"[2] 
+```
+
+* Hence, our manual selected model is 
+```{r,echo=FALSE}
+Mred <- lm(fhs$chdrisk~. - ldlc - diabp - cursmoke - prevstrk
+           + totchol:bmi+ totchol:hdlc+totchol:ldlc
+           + sysbp:diabp + sysbp:bpmeds + sysbp:prevhyp
+           + diabp:bpmeds +  diabp:prevhyp
+           + diabetes:glucose
+           + totchol:heartrte + sysbp:heartrte
+           + prevmi:hdlc + prevmi:ldlc 
+           + prevstrk:ldlc + prevhyp:ldlc, #some interactions from automated model 
+           data=fhs)
+Mred$call
+```
+
+
+# Model Diagnostics  {#sec:diag}
+
+After constructing two possible models for the data, we want to diagnose the two model by comparing the residual plots and leverage and influence measures. We use residual plots to check our model assumptions: linearity, constant variance and normality. We plot leverage and influence measures to check outliers of the model.
+
+## Residuals Plots {#sec:diag_rs}
+
+* First we are going to use residual plots to diagnose our models and we will use studentized Residuals for our plots, since it looks most normal if the model is correct.
+* Residual vs fitted value plots is often used to check assumptions of linearity and constant variance.
+
+### Studentized Residuals
+```{r, echo=FALSE, fig.width=9, fig.height=6,fig.align="center"}
+X <- model.matrix(Mback)
+H <- X %*% solve(crossprod(X), t(X))
+h <- diag(H)
+#range(h - hatvalues(Mback))
+res.stu <- resid(Mback)/sqrt(1-h)/sigma(Mback)
+
+X.red <- model.matrix(Mred)
+H.red <- X.red %*% solve(crossprod(X.red), t(X.red))
+h.red <- diag(H.red)
+#range(h.red - hatvalues(Mred))
+res.stu.red <- resid(Mred)/sqrt(1-h.red)/sigma(Mred)
+```
+
+```{r, echo=FALSE, fig.width=9, fig.height=5,fig.align="center",  fig.cap = "Residual against predicted values",label="rsplot"}
+par(mfrow = c(1,2), mar = c(4,4,4,0)+.1)
+pt.cex <- .7
+plot(x = predict(Mback), y = res.stu, pch = 16, cex = pt.cex, xlab = "Fitted Value", 
+     ylab = "Studentized Residuals", main = "Model Mback")
+abline(h = 0, col = "red", lty = 2)
+plot(x = predict(Mred), y = res.stu.red, pch = 16, cex = pt.cex, xlab = "Fitted Value", 
+     ylab = "Studentized Residuals", main = "Model Mred")
+abline(h = 0, col = "red", lty = 2)
+```
+
+From Figure 2 (\ref{app:RSplot}), we can know that
+
+* Most points of both plots achieve the assumption of constant variance and linearity for $fitted_value < 1$, however, after 1 there is a gap. After the gap, there is a clear pattern shows a negative linear relationship of fitted value and studentized residuals for the manually selected model(`Mred`), hence the model does not meet the assumption of linearity and constant variance. For the automated generated model(`Mback`), the dots distributed randomly and evenly around $residual = 0$, hence meet the assuption of linearity and constant variance.
+* The points for manually constructed model(`Mred`) is more concentrated than the points in plot for automated generated model(`Mback`).
+
+
+The histogram and QQ plots for residuals can help us to check the assumption of normality. Here, we draw the histogram and QQ plot for the two candidate models.
+
+From Figure 3  (\ref{app:RSplot2}), we can see that
+
+* The two models are both pretty normal on tails but not so much near the center($residual \in [-1,1]$). Plot for manually constructed model(`Mred`) are less normal near 0 than automated generated model(`Mback`) as there are more disagreements in plot for `Mred` than in plot for `Mback`.
+
+```{r, echo=FALSE, fig.width=9, fig.height=4,fig.align="center", fig.cap = "Histograms for residuals",label="rsplot2"}
+par(mfrow = c(1,2), mar = c(4,4,4,0)+.1)
+hist(res.stu, breaks = 50, freq = FALSE, cex.axis = .8, xlab = "Studentized Residuals", 
+     main = "Model Mback")
+curve(dnorm(x), col = "red", add = TRUE)
+hist(res.stu.red, breaks = 50, freq = FALSE, cex.axis = .8, xlab = "Studentized Residuals", 
+     main = "Model Mred")
+curve(dnorm(x), col = "red", add = TRUE)
+```
+
+```{r, echo=FALSE, fig.width=9, fig.height=4,fig.align="center", fig.cap = "QQ plots for residuals",label="qqplot"}
+par(mfrow = c(1,2), mar = c(4,4,4,0)+.1)
+qqnorm(res.stu, main = "Model Mback", pch = 16, cex = .8, cex.axis = .8)
+abline(a = 0, b = 1, col = "red")
+qqnorm(res.stu.red, main = "Model Mred", pch = 16, cex = .8, cex.axis = .8)
+abline(a = 0, b = 1, col = "red")
+```
+
+From Figure 4 (\ref{app:QQplot}), we can see that
+
+* The points for the automated model(`Mback`) agree with the lines pretty well after $theoretical_quantiles = -2$. Before $theoretical_quantiles = -2$, the data shows disagreement with the normal line and after $theoretical_quantiles = 2$, there is a little discrepancy between the normal line and the actual data.
+* The points fit well for the manually constructed model(`Mred`) for $theoretical_quantiles \in [-2,2]$. However, at both sides, the data shows some discrepancy to the normal line.
+* Comparing the two QQ plots, we can see that both models are less normal at the two ends and pretty normal in $[-2, 2]$. However, the automated selected model(`Mback`) fits the normal line better than the manually constructed model(`Mred`) for $theoretical quantiles > -2$. Hence, we can conclude that although both candidate models achieve the assumption of normality, the automated generated model(`Mback`) is more normal than the manually constructed model(`Mred`).
+
+## Leverage and Influence Measures {#sec:diag_li}
+
+* Leverage and influence measures are two specific types of outliers and we may need to check the leverage and influence measures for both models to compare the outliers of the two models.
+
+```{r, echo=FALSE, fig.width=9, fig.height=7,fig.align="center", fig.cap = "Cook's distance against leverage", label="cplot"}
+par(mfrow = c(2,1))
+D <- cooks.distance(Mback)
+infl.ind <- which.max(D)
+p <- length(coef(Mback))
+n <- 2306
+hbar <- p/n
+lev.ind <- h > 2*hbar
+clrs <- rep("black", len = n)
+clrs[lev.ind] <- "blue"
+clrs[infl.ind] <- "red"
+
+plot(h, D, xlab = "Leverage", ylab = "Cook's Influence Measure",main="Mback",
+     pch = 21, bg = clrs, cex = 0.8, cex.axis = .8)
+abline(v = 2*hbar, col = "grey60", lty = 2)
+legend("topleft", legend = c("High Leverage", "High Influence"),
+       pch = 21, pt.bg = c("blue", "red"),cex = .8, pt.cex = .8)
+
+
+D2 <- cooks.distance(Mred)
+infl.ind2 <- which.max(D2)
+p2 <- length(coef(Mred))
+hbar2 <- p2/n
+lev.ind2 <- h.red > 2*hbar2
+clrs2 <- rep("black", len = n)
+clrs2[lev.ind2] <- "blue"
+clrs2[infl.ind2] <- "red"
+
+plot(h.red, D2, xlab = "Leverage", ylab = "Cook's Influence Measure",
+     main="Mred",pch = 21, bg = clrs, cex = 0.8, cex.axis = .8)
+abline(v = 2*hbar2, col = "grey60", lty = 2)
+legend("topleft", legend = c("High Leverage", "High Influence"), 
+       pch = 21, pt.bg = c("blue", "red"),cex = .8, pt.cex = .8)
+```
+
+According to Figure 5 (\ref{app:Cplot}):
+
+* These two graphs show us how much the whole regression model would change if each ovservation was not in the model.
+* `Mback` model makes more data with bigger leverage. However, most of those high leverage point are with smaller cook's distance. That tells us that `Mback` has less outliers than `Mred`.
+
+# Model selection {#sec:ms}
+
+## Cross Validation {#sec:ms_cs}
+
+* The final steps before we making the decision is cross validation.
+* cross-validation is primarily a way of measuring the predictive performance of a statistical model
+* It uses the training set $S_{train}$ to estimate $\theta$ and the testing set $S_{test}$ to claculate $\Lambda$ (the likelihood ratio)
+
+### MSPE {#sec:mspe}
+
+* We will evaluate our models based on their performance on rMSPE.
+* The MSPE measures the expected squared distance between prediction for a specific value and what the true value is. 
+* Detailed R code procedures are in Appendix \ref{app:Cross}
+
+```{r cachedChunk3,cache=TRUE,echo=FALSE,label="cross"}
+# models to compare
+M1 <- Mback
+M2 <- Mred
+Mnames <- expression(M[BACK], M[RED])
+# Cross-validation setup
+nreps <- 2e3 # number of replications
+ntot <- nrow(fhs) # total number of observations 
+ntrain <- 1500 # size of training set 5:1
+ntest <- ntot-ntrain # size of test set
+logitnorm_mean <- function(mu, sigma){
+  v = 1/(1+exp(-mu))
+  alpha_1 <- 1/(sigma^2*(1-v))
+  alpha_2 <- 1/(v*sigma^2) 
+  gqp <- gauss.quad.prob(n = ntest, dist = "beta", alpha = alpha_1, beta = alpha_2)
+  sum <- 0
+  for (i in 1:ntest) {
+    x <- gqp$nodes[i]
+    w <- gqp$weights[i]
+    logit_x <- log(x) - log(1-x)
+    g <-  dnorm(logit_x, mean=mu, sd= sigma,log=TRUE) - log(1-x) -dbeta(x, shape1 = alpha_1, shape2=alpha_2, log=TRUE)
+    h <- exp(g)
+    sum <- sum + w*h
+  }
+  return (sum)
+}
+
+rmspe1 <- rep(NA, nreps) 
+rmspe2 <- rep(NA, nreps)
+logLambda <- rep(NA, nreps)# log-likelihod ratio statistic for each replication
+for(ii in 1:nreps) {
+# randomly select training observations
+  train.ind <- sample(ntot, ntrain) # training observations
+# refit the models on the subset of training data; ?update for details!
+  M1.cv <- update(M1, subset = train.ind)
+  M2.cv <- update(M2, subset = train.ind)
+# out-of-sample residuals for both models
+# that is, testing data - predictions with training parameters
+  
+  M1.sigma <- sqrt(sum(resid(M1.cv)^2)/ntrain) # MLE of sigma
+  M2.sigma <- sqrt(sum(resid(M2.cv)^2)/ntrain)
+  M1.mu <- mean(predict(M1.cv, newdata = fhs[-train.ind,]))
+  M2.mu <- mean(predict(M2.cv, newdata = fhs[-train.ind,]))
+  
+  M1.res <- fhs$chdrisk[-train.ind] -
+    logitnorm_mean(M1.mu,M1.sigma)
+  M2.res <- fhs$chdrisk[-train.ind] -
+    logitnorm_mean(M2.mu,M2.sigma)
+# mean-square prediction errors
+  rmspe1[ii] <- mean(M1.res^2)
+  rmspe2[ii] <- mean(M2.res^2)
+
+# since res = y - pred, dnorm(y, pred, sd) = dnorm(res, 0, sd)
+  logLambda[ii] <- sum(dnorm(M1.res, mean = 0, sd = M1.sigma, log = TRUE))
+  logLambda[ii] <- logLambda[ii] -
+    sum(dnorm(M2.res, mean = 0, sd = M2.sigma, log = TRUE))
+}
+```
+
+
+```{r, fig.width=9, fig.height=5, fig.cap = "Boxplots for rMSPE",echo=FALSE, label="box"}
+print(c(mean(sqrt(rmspe1)), mean(sqrt(rmspe2))))
+par(mar = c(4.5, 4.5, .1, .1))
+boxplot(x = list(sqrt(rmspe1), sqrt(rmspe2)), names = Mnames, cex = .7,
+ylab = "rMSPE", col = c("yellow", "orange"))
+```
+
+* The box-plots (\ref{app:Box}) for their rMSPE are quiet same. However the average of `MBack`'s rMSPE is smaller than `MRed`'s rMSPE (1.868417 VS 1.870160)
+
+* According to the defination of the MSPE \ref{sec:mspe}, we consider MBack is better than MRED. In general, `MBack` has smaller rMSPE than `MRed`. 
+
+```{r,render = 'normal_print',echo=FALSE}
+out <- tidy(Mback)
+knitr::kable(out,caption = "Model summary")
+```
+
+# Discussion {#sec:dss}
+
+According to the parameter estimates $\hat{\beta}$, `prevmi` has the largest $\hat{\beta}$ and `bmi` has the smallest $\hat{\beta}$ other than the estimate for the intercept $\hat{\beta_0}$. This means that the most important factor related to high risk of getting coronary heart disease is whether or not the individual has had myocardial infarction. People who previously had myocardial infarction may have a higher risk of having CHD. Moreover, low CHD risk is highly related to body mass index, meaning that people with better body mass index have lower change of having CHD. Furthermore, based on the analysis, if the person is non-smoking fit female who has higher serum total cholesterol, younger age, higher systolic blood pressure, lower diastolic blood pressure, higher body mass index, lower heart rate, lower casual serum glucose, higher high density lipoprotein cholesterol and is not on anti-hypertensive medication and never had myocardial infarction, stroke or hypertension, the person would have lower risk of getting coronary heart disease. Besides, there are still some coefficient with high p-values. This is because that although the variable itself may not be important, the interaction between this variable and some other variables may be important. Hence, they are not removed from our final model. The model assumption of constant variance and linearity is violated as there is a gap between two parts of points in the residual vs fitted value plot, which means that the model may not be able to explain the data very well. This may lead to discrepancy between the recommanded behavior change to lower the risk of CHD and actual situation.
+
+\newpage
+\appendix
+
+# R Code For Summary Statistic
+
+## Summary {#app:Summary}
+```{r, ref.label = "Summary", eval = FALSE}
+```
+
+## Pair plot {#app:ppplot}
+```{r, ref.label = "ppplot", eval = FALSE}
+```
+
+## VIF calculation {#app:VIF}
+```{r, ref.label = "vif", eval = FALSE}
+```
+
+# R Code For Model selection
+
+## Backward {#app:BWE}
+```{r, ref.label = "bwe", eval = FALSE}
+```
+
+## Colinear test {#app:Colinear}
+```{r, ref.label ="colinear", eval = FALSE}
+```
+
+## Categorical test {#app:Catgo}
+```{r, ref.label ="catgo", eval = FALSE}
+```
+
+## Disease interaction test {#app:Dis}
+```{r, ref.label ="dis", eval = FALSE}
+```
+
+## Automate model interaction test part 1 {#app:Auto}
+```{r, ref.label ="auto", eval = FALSE}
+```
+
+## Automate model interaction test part 2 {#app:Auto_2}
+```{r, ref.label ="auto_2", eval = FALSE}
+```
+
+# R code for model diagnostics
+
+## Residual plot {#app:RSplot}
+```{r, ref.label = "rsplot", eval = FALSE}
+```
+
+## RSplot2 {#app:RSplot2}
+```{r, ref.label = "rsplot2", eval = FALSE}
+```
+
+## QQplot {#app:QQplot}
+```{r, ref.label = "qqplot", eval = FALSE}
+```
+
+## Cook's distance against leverage {#app:Cplot}
+```{r, ref.label = "cplot", eval = FALSE}
+```
+
+# R code for Model Selectio
+
+## Cross validation {#app:Cross}
+```{r, ref.label = "cross", eval = FALSE}
+```
+
+## Box plot for rMSPE {#app:Box}
+```{r, ref.label = "box", eval = FALSE}
+```
